@@ -11,7 +11,7 @@ Einfache Collage-App als Web-App (PWA). Läuft komplett im Browser, die Fotos ve
 - Pro Foto: verschieben, zoomen (Zwei-Finger-Geste oder Regler), tauschen, entfernen
 - Beschriftung mit Ort und Datum pro Foto: Aufnahmedatum und GPS-Standort werden aus den Foto-Metadaten gelesen (EXIF), alles lässt sich von Hand ändern. Der Ortsname wird auf Wunsch über OpenStreetMap (Nominatim) aus den Koordinaten ermittelt – dabei werden nur Koordinaten gesendet, nie Fotos.
 - Ort und Datum sind pro Foto an- und abwählbar und lassen sich zusätzlich einmalig in einem eigenen Bereich (Streifen oben oder unten) zeigen: automatisch aus allen Orten und dem Zeitraum oder mit eigenem Text
-- Formen: einzelne Fotos oder die ganze Collage als Kreis, Herz, Stern, Raute, Sechseck, Dreieck oder Blüte
+- Formen: einzelne Fotos oder die ganze Collage als Kreis, Herz, Stern, Raute, Sechseck, Dreieck, Blüte, Wolke oder Blatt
 - Freie Texte: beliebig viele, mit dem Finger verschiebbar, mit Schrift, Größe, Farbe, Drehung und Kontur
 - „Neu" entfernt alle Fotos und beginnt eine neue Collage; einzelne Fotos lassen sich im Tab „Foto" entfernen
 - Export als JPG oder PNG (1080 / 2160 / 3000 px) über das iOS-Teilen-Menü

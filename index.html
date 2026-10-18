@@ -377,7 +377,8 @@ function roundRect(ctx, x, y, w, h, r) {
 /* ---------- Formen ---------- */
 const SHAPES = [
   ["rect", "Eckig"], ["circle", "Rund"], ["heart", "Herz"], ["star", "Stern"],
-  ["diamond", "Raute"], ["hexagon", "Sechseck"], ["triangle", "Dreieck"], ["flower", "Blüte"]
+  ["diamond", "Raute"], ["hexagon", "Sechseck"], ["triangle", "Dreieck"], ["flower", "Blüte"],
+  ["cloud", "Wolke"], ["leaf", "Blatt"]
 ];
 const shapeCache = {};
 // Umriss als Punkte im Einheitsquadrat (Seitenverhältnis bleibt, zentriert).
@@ -403,6 +404,33 @@ function shapePoints(shape) {
     const r = 0.78 + 0.22 * Math.cos(8 * t);
     return [r * Math.cos(t), r * Math.sin(t)];
   });
+  else if (shape === "cloud") {
+    // Vereinigung aus Kreisen und einem flachen Boden; der Umriss wird per Strahlen von außen abgetastet.
+    const circles = [[0.30, 0.50, 0.17], [0.50, 0.38, 0.24], [0.72, 0.48, 0.19], [0.26, 0.67, 0.13], [0.80, 0.67, 0.13]];
+    const inside = (x, y) => (x >= 0.26 && x <= 0.80 && y >= 0.55 && y <= 0.80) ||
+      circles.some(([cx, cy, r]) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r);
+    const cx0 = 0.53, cy0 = 0.58;
+    for (let i = 0; i < 360; i++) {
+      const t = i / 360 * Math.PI * 2, dx = Math.cos(t), dy = Math.sin(t);
+      let r = 0.8;
+      while (r > 0 && !inside(cx0 + dx * r, cy0 + dy * r)) r -= 0.002;
+      raw.push([cx0 + dx * r, cy0 + dy * r]);
+    }
+  }
+  else if (shape === "leaf") {
+    // Spitze oben rechts: gespiegelte Kurve entlang einer Achse, dann um 45° gedreht.
+    const n = 60, up = [[-0.14, -0.012]], lo = [[-0.14, 0.012]];   // erster Punkt: Stiel
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, h = 0.27 * Math.sin(Math.PI * t) * (1.1 - 0.35 * t);
+      up.push([t, -h]);
+      lo.push([t, h]);
+    }
+    const a = -Math.PI / 4, ca = Math.cos(a), sa = Math.sin(a);
+    [...up, ...lo.reverse()].forEach(([x, y]) => {
+      const px = x - 0.5;
+      raw.push([px * ca - y * sa, px * sa + y * ca]);
+    });
+  }
   const xs = raw.map(p => p[0]), ys = raw.map(p => p[1]);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
   const k = 1 / Math.max(maxX - minX, maxY - minY);
