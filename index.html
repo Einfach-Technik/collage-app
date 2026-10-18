@@ -378,7 +378,7 @@ function roundRect(ctx, x, y, w, h, r) {
 const SHAPES = [
   ["rect", "Eckig"], ["circle", "Rund"], ["heart", "Herz"], ["star", "Stern"],
   ["diamond", "Raute"], ["hexagon", "Sechseck"], ["triangle", "Dreieck"], ["flower", "Blüte"],
-  ["cloud", "Wolke"], ["leaf", "Blatt"]
+  ["cloud", "Wolke"], ["leaf", "Blatt"], ["sun", "Sonne"], ["moon", "Mond"], ["drop", "Tropfen"], ["cross", "Kreuz"]
 ];
 const shapeCache = {};
 // Umriss als Punkte im Einheitsquadrat (Seitenverhältnis bleibt, zentriert).
@@ -430,6 +430,32 @@ function shapePoints(shape) {
       const px = x - 0.5;
       raw.push([px * ca - y * sa, px * sa + y * ca]);
     });
+  }
+  else if (shape === "sun") {
+    const rays = 12, n = 480;
+    for (let i = 0; i < n; i++) {
+      const t = i / n * Math.PI * 2, f = Math.abs(2 * ((t / (Math.PI * 2 / rays)) % 1) - 1);
+      const r = f > 0.55 ? 0.66 : 0.66 + 0.34 * (1 - f / 0.55);   // Kreis mit dreieckigen Strahlen
+      raw.push([r * Math.cos(t), r * Math.sin(t)]);
+    }
+  }
+  else if (shape === "moon") {
+    // Sichel: großer Kreis minus versetzter kleinerer Kreis; Öffnung nach rechts.
+    const d = 0.5, rho = 0.85, x0 = (1 + d * d - rho * rho) / (2 * d), y0 = Math.sqrt(1 - x0 * x0);
+    const phi = Math.atan2(y0, x0), pa = Math.atan2(y0, x0 - d), pb = Math.atan2(-y0, x0 - d), n = 100;
+    for (let i = 0; i <= n; i++) {
+      const t = phi + (2 * Math.PI - 2 * phi) * i / n;
+      raw.push([Math.cos(t), Math.sin(t)]);
+    }
+    for (let i = 1; i < n; i++) {
+      const t = pb + ((pa - 2 * Math.PI) - pb) * i / n;
+      raw.push([d + rho * Math.cos(t), rho * Math.sin(t)]);
+    }
+  }
+  else if (shape === "drop") poly(160, t => [Math.sin(t) * Math.sin(t / 2), -Math.cos(t)]);
+  else if (shape === "cross") {
+    const a = 0.3;
+    raw.push([-a, -1], [a, -1], [a, -a], [1, -a], [1, a], [a, a], [a, 1], [-a, 1], [-a, a], [-1, a], [-1, -a], [-a, -a]);
   }
   const xs = raw.map(p => p[0]), ys = raw.map(p => p[1]);
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -514,12 +540,27 @@ function textAt(px, py) {
   return -1;
 }
 
+const shapeOf = p => p.shape ?? state.shape;
+// Box, in der das Foto liegt: Zelle (eckig) oder das Quadrat der Form.
+const photoBox = (p, r) => shapeOf(p) === "rect" ? r : shapeBox(r);
+// Grundmaßstab bei Zoom 1: eckig = ganzes Foto sichtbar, mit Form = Form ganz gefüllt.
+// Größerer Zoom zeigt einen Ausschnitt, kleinerer verkleinert das Foto.
+const fitScale = (p, r) => {
+  const sx = r.w / p.src.width, sy = r.h / p.src.height;
+  return shapeOf(p) === "rect" ? Math.min(sx, sy) : Math.max(sx, sy);
+};
+// Form eines Fotos ändern; beim Wechsel eckig <-> Form ändert sich der Grundmaßstab, daher Zoom zurücksetzen.
+function setShape(p, key) {
+  if ((shapeOf(p) === "rect") !== (key === "rect")) { p.zoom = 1; p.ox = 0; p.oy = 0; }
+  p.shape = key;
+}
+
 function drawPhoto(ctx, p, r) {
   const iw = p.src.width, ih = p.src.height;
-  const s = Math.max(r.w / iw, r.h / ih) * p.zoom;
+  const s = fitScale(p, r) * p.zoom;
   const dw = iw * s, dh = ih * s;
-  const x = r.x + (r.w - dw) / 2 + p.ox * (dw - r.w) / 2;
-  const y = r.y + (r.h - dh) / 2 + p.oy * (dh - r.h) / 2;
+  const x = r.x + (r.w - dw) / 2 + p.ox * Math.max(0, dw - r.w) / 2;
+  const y = r.y + (r.h - dh) / 2 + p.oy * Math.max(0, dh - r.h) / 2;
   ctx.drawImage(p.src, x, y, dw, dh);
 }
 
@@ -528,7 +569,6 @@ function render(ctx, W, H, ui) {
   ctx.fillRect(0, 0, W, H);
   const rects = cellRects(W, H);
   const rad = unit(W, H, state.radius);
-  const plain = state.shape === "rect";
   ctx.save();
   if (state.frame !== "rect") {                       // Gesamtform der Collage
     shapePath(ctx, state.frame, contentArea(W, H), 0);
@@ -537,9 +577,9 @@ function render(ctx, W, H, ui) {
   rects.forEach((r, i) => {
     const p = state.photos[i];
     if (!p) return;
-    const box = plain ? r : shapeBox(r);
+    const plain = shapeOf(p) === "rect", box = photoBox(p, r);
     ctx.save();
-    shapePath(ctx, state.shape, box, rad);
+    shapePath(ctx, shapeOf(p), box, rad);
     ctx.clip();
     drawPhoto(ctx, p, box);
     ctx.restore();
@@ -558,8 +598,9 @@ function render(ctx, W, H, ui) {
     ctx.save();
     ctx.lineWidth = 3;
     ctx.strokeStyle = state.swapMode ? "#ff9f0a" : "#0a84ff";
-    if (plain) roundRect(ctx, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad);
-    else shapePath(ctx, state.shape, shapeBox(r), rad);
+    const sp = state.photos[state.selected];
+    if (shapeOf(sp) === "rect") roundRect(ctx, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad);
+    else shapePath(ctx, shapeOf(sp), shapeBox(r), rad);
     ctx.stroke();
     ctx.restore();
   }
@@ -789,7 +830,7 @@ async function addFiles(files) {
   for (const f of list.slice(0, Math.max(0, room))) {
     try {
       const meta = await readMeta(f);
-      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0, showPlace: state.showPlace, showDate: state.showDate, ...meta });
+      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0, shape: state.shape, showPlace: state.showPlace, showDate: state.showDate, ...meta });
     } catch (e) { failed++; }
   }
   if (failed) toast(`${failed} Foto(s) konnten nicht geladen werden.`);
@@ -863,7 +904,7 @@ preview.addEventListener("pointermove", e => {
   const p = state.photos[drag.cell];
   if (pointers.size >= 2 && drag.pinch) {
     const [a, b] = [...pointers.values()];
-    p.zoom = clamp(drag.pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / drag.pinch.dist, 1, 4);
+    p.zoom = clamp(drag.pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / drag.pinch.dist, 0.3, 8);
     redraw();
     return;
   }
@@ -871,8 +912,9 @@ preview.addEventListener("pointermove", e => {
   drag.moved = true;
   if (state.selected !== drag.cell || state.swapMode) return;   // verschieben nur bei ausgewähltem Feld
   const r = cellRects(view.w, view.h)[drag.cell];
-  const s = Math.max(r.w / p.src.width, r.h / p.src.height) * p.zoom;
-  const exX = p.src.width * s - r.w, exY = p.src.height * s - r.h;
+  const b = photoBox(p, r);
+  const s = fitScale(p, b) * p.zoom;
+  const exX = p.src.width * s - b.w, exY = p.src.height * s - b.h;
   if (exX > 0.5) p.ox = clamp(p.ox + (pos.x - prev.x) / (exX / 2), -1, 1);
   if (exY > 0.5) p.oy = clamp(p.oy + (pos.y - prev.y) / (exY / 2), -1, 1);
   redraw();
@@ -1146,10 +1188,11 @@ function shapeButton(shape, label, active, onClick) {
 }
 
 function renderFormTab() {
-  tabBody.append(el(`<p class="hint">Form der einzelnen Fotos</p>`));
+  tabBody.append(el(`<p class="hint">Form für alle Fotos · eine eigene Form pro Foto: Foto antippen, dann im Tab „Foto"</p>`));
   const s1 = el(`<div class="scroller"></div>`);
-  SHAPES.forEach(([key, label]) => s1.append(shapeButton(key, label, state.shape === key,
-    () => { state.shape = key; persist(); renderTab(); redraw(); })));
+  const isActive = key => state.photos.length ? state.photos.every(p => shapeOf(p) === key) : state.shape === key;
+  SHAPES.forEach(([key, label]) => s1.append(shapeButton(key, label, isActive(key),
+    () => { state.shape = key; state.photos.forEach(p => setShape(p, key)); persist(); renderTab(); redraw(); })));
   tabBody.append(s1);
   tabBody.append(el(`<p class="hint" style="margin-top:8px">Form der ganzen Collage</p>`));
   const s2 = el(`<div class="scroller"></div>`);
@@ -1269,12 +1312,16 @@ function renderPhotoTab() {
   }
   const p = state.photos[i];
   tabBody.append(el(`<p class="hint">Foto ${i + 1} · ziehen zum Verschieben, zwei Finger zum Zoomen</p>`));
-  const row = el(`<div class="row"><label>Zoom</label><input type="range" min="1" max="4" step="0.01"><output></output></div>`);
+  const row = el(`<div class="row"><label>Zoom</label><input type="range" min="0.3" max="8" step="0.01"><output></output></div>`);
   const input = row.querySelector("input"), out = row.querySelector("output");
   input.value = p.zoom;
   out.textContent = p.zoom.toFixed(1) + "×";
   input.addEventListener("input", () => { p.zoom = +input.value; out.textContent = p.zoom.toFixed(1) + "×"; redraw(); });
   tabBody.append(row);
+
+  const shapeRow = el(`<div class="row"><label>Form</label><div class="scroller" style="flex:1"></div></div>`);
+  SHAPES.forEach(([key, label]) => shapeRow.querySelector(".scroller").append(
+    shapeButton(key, label, shapeOf(p) === key, () => { setShape(p, key); renderTab(); redraw(); })));
 
   const showRow = el(`<div class="row"><label>Anzeigen</label><div class="scroller" style="flex:1"></div></div>`);
   [["showPlace", "Ort"], ["showDate", "Datum"]].forEach(([k, label]) => {
@@ -1294,19 +1341,29 @@ function renderPhotoTab() {
   gpsBtn.disabled = p.lat === null;
   gpsBtn.title = p.lat === null ? "Dieses Foto enthält keinen Standort" : "";
   gpsBtn.addEventListener("click", async () => { await resolvePlaces([i], true); });
-  tabBody.append(showRow, dateRow, placeRow);
+  const textRows = [showRow, dateRow, placeRow];
 
   const acts = el(`<div class="sel-actions"></div>`);
   const swap = el(`<button>${state.swapMode ? "Zielfeld antippen …" : "Tauschen"}</button>`);
   if (state.swapMode) swap.classList.add("active");
   swap.disabled = state.photos.length < 2;
   swap.addEventListener("click", () => { state.swapMode = !state.swapMode; renderTab(); redraw(); });
-  const reset = el(`<button>Zurücksetzen</button>`);
-  reset.addEventListener("click", () => { p.zoom = 1; p.ox = 0; p.oy = 0; renderTab(); redraw(); });
+  // Zoom so setzen, dass das Foto ganz zu sehen ist bzw. das Feld ganz füllt.
+  const zoomTo = pick => () => {
+    const b = photoBox(p, cellRects(view.w, view.h)[i]);
+    const sx = b.w / p.src.width, sy = b.h / p.src.height;
+    p.zoom = clamp(pick(sx, sy) / fitScale(p, b), 0.3, 8);
+    p.ox = 0; p.oy = 0;
+    renderTab(); redraw();
+  };
+  const wholeBtn = el(`<button>Ganz zeigen</button>`);
+  wholeBtn.addEventListener("click", zoomTo(Math.min));
+  const fillBtn = el(`<button>Ausfüllen</button>`);
+  fillBtn.addEventListener("click", zoomTo(Math.max));
   const del = el(`<button class="danger">Entfernen</button>`);
   del.addEventListener("click", () => removePhoto(i));
-  acts.append(swap, reset, del);
-  tabBody.append(acts);
+  acts.append(swap, wholeBtn, fillBtn, del);
+  tabBody.append(shapeRow, acts, ...textRows);
 }
 
 function renderExportTab() {
