@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Collage</title>
+<meta name="description" content="Fotos zu einer Collage zusammensetzen – direkt auf dem Gerät.">
+<meta name="theme-color" content="#111114">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Collage">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root {
+  --bg: #f2f2f5;
+  --panel: #ffffff;
+  --text: #1c1c1e;
+  --muted: #6e6e73;
+  --line: #d8d8de;
+  --accent: #0a84ff;
+  --accent-text: #ffffff;
+  --chip: #e9e9ee;
+  --danger: #d70015;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111114;
+    --panel: #1c1c20;
+    --text: #f2f2f7;
+    --muted: #9a9aa2;
+    --line: #34343a;
+    --chip: #2a2a30;
+    --danger: #ff6961;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+header {
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+header h1 { font-size: 20px; margin: 0; }
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--chip);
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: .4; cursor: default; }
+button.active { outline: 2px solid var(--accent); }
+
+#stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 16px 12px;
+}
+#canvasWrap { position: relative; touch-action: none; }
+canvas#preview {
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.25);
+  touch-action: none;
+}
+#empty {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 24px;
+  color: var(--muted);
+}
+
+#panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+#tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+}
+#tabs button {
+  flex: 1;
+  background: none;
+  padding: 8px 4px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+#tabs button.on { color: var(--accent); background: var(--chip); font-weight: 600; }
+#tabBody {
+  padding: 12px 16px;
+  height: 168px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.row > label { flex: 0 0 84px; color: var(--muted); font-size: 14px; }
+.row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.row output { flex: 0 0 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+.scroller { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+.scroller button { flex: 0 0 auto; }
+.layout-btn { width: 64px; height: 64px; padding: 4px; }
+.layout-btn canvas { width: 100%; height: 100%; display: block; }
+.swatch {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
+  border: 2px solid var(--line); padding: 0;
+}
+.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+input[type=color] { width: 44px; height: 36px; border: 0; padding: 0; background: none; }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sel-actions { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+select {
+  font: inherit; color: inherit; background: var(--chip);
+  border: 0; border-radius: 10px; padding: 9px 12px;
+}
+#toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 250px);
+  transform: translateX(-50%); background: rgba(0,0,0,.8); color: #fff;
+  padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0;
+  pointer-events: none; transition: opacity .2s; max-width: 90vw; text-align: center;
+}
+#toast.show { opacity: 1; }
+input[type=file] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Collage</h1>
+  <div class="actions">
+    <button id="btnAdd">+ Fotos</button>
+    <button id="btnSave" class="primary" disabled>Speichern</button>
+  </div>
+</header>
+
+<div id="stage">
+  <div id="canvasWrap">
+    <canvas id="preview"></canvas>
+    <div id="empty">
+      <div style="font-size:44px">🖼️</div>
+      <div>Wähle Fotos aus, um eine Collage zu erstellen.</div>
+      <button class="primary" id="btnAdd2">Fotos auswählen</button>
+    </div>
+  </div>
+</div>
+
+<div id="panel">
+  <div id="tabs">
+    <button data-tab="layout" class="on">Layout</button>
+    <button data-tab="style">Stil</button>
+    <button data-tab="photo">Foto</button>
+    <button data-tab="export">Export</button>
+  </div>
+  <div id="tabBody"></div>
+</div>
+
+<input type="file" id="file" accept="image/*" multiple>
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ---------- Zustand ---------- */
+const ASPECTS = [
+  ["1:1", 1, 1], ["4:5", 4, 5], ["3:4", 3, 4], ["9:16", 9, 16], ["16:9", 16, 9], ["3:2", 3, 2], ["2:3", 2, 3]
+];
+const COLORS = ["#ffffff", "#000000", "#f5efe6", "#1f2937", "#ff6b6b", "#ffd166", "#06d6a0", "#4dabf7", "#b197fc"];
+const MAX_SRC = 2400;      // Quellbilder werden darauf verkleinert (Speicher)
+const MAX_PHOTOS = 12;
+
+const state = {
+  photos: [],              // { src: canvas, zoom, ox, oy }
+  layoutIndex: 0,
+  aspect: 0,
+  gap: 8,                  // in Prozent der kürzeren Seite * 10 (siehe unit())
+  pad: 8,
+  radius: 0,
+  bg: "#ffffff",
+  selected: -1,
+  swapMode: false,
+  format: "jpeg",
+  size: 2160,
+  tab: "layout"
+};
+
+try {
+  const saved = JSON.parse(localStorage.getItem("collage-settings") || "{}");
+  for (const k of ["aspect", "gap", "pad", "radius", "bg", "format", "size"]) {
+    if (saved[k] !== undefined) state[k] = saved[k];
+  }
+} catch (e) {}
+function persist() {
+  try {
+    const { aspect, gap, pad, radius, bg, format, size } = state;
+    localStorage.setItem("collage-settings", JSON.stringify({ aspect, gap, pad, radius, bg, format, size }));
+  } catch (e) {}
+}
+
+/* ---------- Layouts ---------- */
+// Ein Layout ist eine Liste von Rechtecken [x, y, w, h] im Einheitsquadrat.
+function rowsLayout(counts) {
+  const out = [], rh = 1 / counts.length;
+  counts.forEach((c, r) => { for (let i = 0; i < c; i++) out.push([i / c, r * rh, 1 / c, rh]); });
+  return out;
+}
+function colsLayout(counts) {
+  return rowsLayout(counts).map(([x, y, w, h]) => [y, x, h, w]);
+}
+function distribute(n, parts) {
+  const base = Math.floor(n / parts), extra = n % parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < extra ? 1 : 0));
+}
+function layoutsFor(n) {
+  const list = [], seen = new Set();
+  const add = (name, rects) => {
+    const key = JSON.stringify(rects.map(r => r.map(v => +v.toFixed(3))));
+    if (!seen.has(key)) { seen.add(key); list.push({ name, rects }); }
+  };
+  if (n <= 1) { add("Einzeln", [[0, 0, 1, 1]]); return list; }
+  const maxParts = Math.min(n, 5);
+  for (let r = 1; r <= maxParts; r++) add(`${r} Zeilen`, rowsLayout(distribute(n, r)));
+  for (let c = 1; c <= maxParts; c++) add(`${c} Spalten`, colsLayout(distribute(n, c)));
+  if (n >= 3 && n <= 7) {
+    const rest = n - 1;
+    add("Groß links", [[0, 0, .6, 1], ...Array.from({ length: rest }, (_, i) => [.6, i / rest, .4, 1 / rest])]);
+    add("Groß oben", [[0, 0, 1, .6], ...Array.from({ length: rest }, (_, i) => [i / rest, .6, 1 / rest, .4])]);
+    add("Groß rechts", [[.4, 0, .6, 1], ...Array.from({ length: rest }, (_, i) => [0, i / rest, .4, 1 / rest])]);
+    add("Groß unten", [[0, .4, 1, .6], ...Array.from({ length: rest }, (_, i) => [i / rest, 0, 1 / rest, .4])]);
+  }
+  // Ausgewogene Layouts (Felder nahe am Quadrat) zuerst, damit die Vorauswahl brauchbar ist.
+  const score = l => l.rects.reduce((s, r) => s + Math.abs(Math.log(r[2] / r[3])), 0) / l.rects.length;
+  return list.map((l, i) => ({ l, i, s: score(l) })).sort((a, b) => a.s - b.s || a.i - b.i).map(o => o.l);
+}
+let layouts = layoutsFor(0);
+function currentLayout() {
+  return layouts[Math.min(state.layoutIndex, layouts.length - 1)];
+}
+
+/* ---------- Zeichnen ---------- */
+// Abstände sind relativ zur kürzeren Seite, damit Vorschau und Export gleich aussehen.
+function unit(W, H, v) { return Math.min(W, H) * v / 400; }
+
+function cellRects(W, H) {
+  const lay = currentLayout();
+  if (!lay) return [];
+  const pad = unit(W, H, state.pad), gap = unit(W, H, state.gap);
+  const ax = pad - gap / 2, ay = pad - gap / 2;
+  const aw = W - 2 * pad + gap, ah = H - 2 * pad + gap;
+  return lay.rects.map(([x, y, w, h]) => ({
+    x: ax + x * aw + gap / 2,
+    y: ay + y * ah + gap / 2,
+    w: w * aw - gap,
+    h: h * ah - gap
+  }));
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  if (r === 0) { ctx.rect(x, y, w, h); return; }
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawPhoto(ctx, p, r) {
+  const iw = p.src.width, ih = p.src.height;
+  const s = Math.max(r.w / iw, r.h / ih) * p.zoom;
+  const dw = iw * s, dh = ih * s;
+  const x = r.x + (r.w - dw) / 2 + p.ox * (dw - r.w) / 2;
+  const y = r.y + (r.h - dh) / 2 + p.oy * (dh - r.h) / 2;
+  ctx.drawImage(p.src, x, y, dw, dh);
+}
+
+function render(ctx, W, H, ui) {
+  ctx.fillStyle = state.bg;
+  ctx.fillRect(0, 0, W, H);
+  const rects = cellRects(W, H);
+  const rad = unit(W, H, state.radius);
+  rects.forEach((r, i) => {
+    const p = state.photos[i];
+    if (!p) return;
+    ctx.save();
+    roundRect(ctx, r.x, r.y, r.w, r.h, rad);
+    ctx.clip();
+    drawPhoto(ctx, p, r);
+    ctx.restore();
+  });
+  if (ui && state.selected >= 0 && rects[state.selected]) {
+    const r = rects[state.selected];
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = state.swapMode ? "#ff9f0a" : "#0a84ff";
+    roundRect(ctx, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* ---------- Vorschau ---------- */
+const preview = document.getElementById("preview");
+const pctx = preview.getContext("2d");
+let view = { w: 300, h: 300 };
+
+function fitPreview() {
+  const stage = document.getElementById("stage");
+  const [, aw, ah] = ASPECTS[state.aspect];
+  const availW = stage.clientWidth - 32, availH = stage.clientHeight - 16;
+  let w = availW, h = w * ah / aw;
+  if (h > availH) { h = availH; w = h * aw / ah; }
+  w = Math.max(80, Math.floor(w)); h = Math.max(80, Math.floor(h));
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  view = { w, h };
+  preview.style.width = w + "px";
+  preview.style.height = h + "px";
+  preview.width = Math.round(w * dpr);
+  preview.height = Math.round(h * dpr);
+  pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  redraw();
+}
+let raf = 0;
+function redraw() {
+  if (raf) return;
+  raf = requestAnimationFrame(() => { raf = 0; render(pctx, view.w, view.h, true); });
+}
+
+/* ---------- Bilder laden ---------- */
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_SRC / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(file.name)); };
+    img.src = url;
+  });
+}
+
+async function addFiles(files) {
+  const list = [...files].filter(f => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name));
+  const room = MAX_PHOTOS - state.photos.length;
+  if (list.length > room) toast(`Maximal ${MAX_PHOTOS} Fotos – der Rest wurde ignoriert.`);
+  let failed = 0;
+  for (const f of list.slice(0, Math.max(0, room))) {
+    try {
+      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0 });
+    } catch (e) { failed++; }
+  }
+  if (failed) toast(`${failed} Foto(s) konnten nicht geladen werden.`);
+  afterPhotosChanged();
+}
+
+let lastCount = -1;
+function afterPhotosChanged() {
+  const n = state.photos.length;
+  if (n !== lastCount) state.layoutIndex = 0;
+  lastCount = n;
+  layouts = layoutsFor(n);
+  state.layoutIndex = Math.min(state.layoutIndex, Math.max(0, layouts.length - 1));
+  if (state.selected >= n) state.selected = -1;
+  state.swapMode = false;
+  document.getElementById("empty").style.display = n ? "none" : "flex";
+  document.getElementById("btnSave").disabled = n === 0;
+  renderTab();
+  redraw();
+}
+
+/* ---------- Interaktion auf der Vorschau ---------- */
+const pointers = new Map();
+let drag = null;
+
+function cellAt(px, py) {
+  const rects = cellRects(view.w, view.h);
+  for (let i = rects.length - 1; i >= 0; i--) {
+    const r = rects[i];
+    if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h && state.photos[i]) return i;
+  }
+  return -1;
+}
+function localPos(e) {
+  const b = preview.getBoundingClientRect();
+  return { x: e.clientX - b.left, y: e.clientY - b.top };
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+preview.addEventListener("pointerdown", e => {
+  if (!state.photos.length) return;
+  preview.setPointerCapture(e.pointerId);
+  const pos = localPos(e);
+  pointers.set(e.pointerId, pos);
+  if (pointers.size === 1) {
+    const hit = cellAt(pos.x, pos.y);
+    drag = { cell: hit, startX: pos.x, startY: pos.y, moved: false, pinch: null };
+  } else if (pointers.size === 2 && drag && drag.cell >= 0) {
+    const [a, b] = [...pointers.values()];
+    drag.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: state.photos[drag.cell].zoom };
+    drag.moved = true;
+  }
+});
+
+preview.addEventListener("pointermove", e => {
+  if (!pointers.has(e.pointerId) || !drag) return;
+  const pos = localPos(e), prev = pointers.get(e.pointerId);
+  pointers.set(e.pointerId, pos);
+  if (drag.cell < 0) return;
+  const p = state.photos[drag.cell];
+  if (pointers.size >= 2 && drag.pinch) {
+    const [a, b] = [...pointers.values()];
+    p.zoom = clamp(drag.pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / drag.pinch.dist, 1, 4);
+    redraw();
+    return;
+  }
+  if (!drag.moved && Math.hypot(pos.x - drag.startX, pos.y - drag.startY) < 6) return;
+  drag.moved = true;
+  if (state.selected !== drag.cell || state.swapMode) return;   // verschieben nur bei ausgewähltem Feld
+  const r = cellRects(view.w, view.h)[drag.cell];
+  const s = Math.max(r.w / p.src.width, r.h / p.src.height) * p.zoom;
+  const exX = p.src.width * s - r.w, exY = p.src.height * s - r.h;
+  if (exX > 0.5) p.ox = clamp(p.ox + (pos.x - prev.x) / (exX / 2), -1, 1);
+  if (exY > 0.5) p.oy = clamp(p.oy + (pos.y - prev.y) / (exY / 2), -1, 1);
+  redraw();
+});
+
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (pointers.size === 0 && drag) {
+    if (!drag.moved) onTapCell(drag.cell);
+    drag = null;
+    if (state.tab === "photo") renderTab();
+  } else if (pointers.size < 2 && drag) {
+    drag.pinch = null;
+  }
+}
+preview.addEventListener("pointerup", endPointer);
+preview.addEventListener("pointercancel", endPointer);
+
+function onTapCell(i) {
+  if (state.swapMode && state.selected >= 0 && i >= 0 && i !== state.selected) {
+    const a = state.selected;
+    [state.photos[a], state.photos[i]] = [state.photos[i], state.photos[a]];
+    state.selected = i;
+    state.swapMode = false;
+    toast("Fotos getauscht");
+  } else {
+    state.swapMode = false;
+    state.selected = i === state.selected ? -1 : i;
+    if (state.selected >= 0) setTab("photo");
+  }
+  renderTab();
+  redraw();
+}
+
+/* ---------- Tabs ---------- */
+const tabBody = document.getElementById("tabBody");
+function setTab(t) {
+  state.tab = t;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  renderTab();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+function el(html) {
+  const t = document.createElement("template");
+  t.innerHTML = html.trim();
+  return t.content.firstElementChild;
+}
+function slider(label, key, min, max, step, fmt) {
+  const row = el(`<div class="row"><label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}"><output></output></div>`);
+  const input = row.querySelector("input"), out = row.querySelector("output");
+  input.value = state[key];
+  out.textContent = fmt(state[key]);
+  input.addEventListener("input", () => {
+    state[key] = +input.value;
+    out.textContent = fmt(state[key]);
+    persist();
+    redraw();
+  });
+  return row;
+}
+
+function renderTab() {
+  tabBody.replaceChildren();
+  if (state.tab === "layout") renderLayoutTab();
+  else if (state.tab === "style") renderStyleTab();
+  else if (state.tab === "photo") renderPhotoTab();
+  else renderExportTab();
+}
+
+function renderLayoutTab() {
+  if (!state.photos.length) {
+    tabBody.append(el(`<p class="hint">Füge Fotos hinzu, dann erscheinen hier passende Layouts.</p>`));
+    return;
+  }
+  tabBody.append(el(`<p class="hint">${state.photos.length} Foto(s) · Layout wählen</p>`));
+  const sc = el(`<div class="scroller"></div>`);
+  layouts.forEach((lay, i) => {
+    const b = el(`<button class="layout-btn" title="${lay.name}"><canvas width="96" height="96"></canvas></button>`);
+    if (i === state.layoutIndex) b.classList.add("active");
+    const c = b.querySelector("canvas").getContext("2d");
+    c.fillStyle = getComputedStyle(document.body).color;
+    lay.rects.forEach(([x, y, w, h]) => c.fillRect(x * 96 + 2, y * 96 + 2, w * 96 - 4, h * 96 - 4));
+    b.addEventListener("click", () => { state.layoutIndex = i; renderTab(); redraw(); });
+    sc.append(b);
+  });
+  tabBody.append(sc);
+}
+
+function renderStyleTab() {
+  const aspectRow = el(`<div class="row"><label>Format</label><div class="scroller" style="flex:1"></div></div>`);
+  const sc = aspectRow.querySelector(".scroller");
+  ASPECTS.forEach(([name], i) => {
+    const b = el(`<button>${name}</button>`);
+    if (i === state.aspect) b.classList.add("active");
+    b.addEventListener("click", () => { state.aspect = i; persist(); fitPreview(); renderTab(); });
+    sc.append(b);
+  });
+  tabBody.append(aspectRow);
+  tabBody.append(slider("Abstand", "gap", 0, 40, 1, v => v));
+  tabBody.append(slider("Rand", "pad", 0, 40, 1, v => v));
+  tabBody.append(slider("Ecken", "radius", 0, 60, 1, v => v));
+  const colorRow = el(`<div class="row"><label>Hintergrund</label><div class="scroller" style="flex:1;align-items:center"></div></div>`);
+  const cs = colorRow.querySelector(".scroller");
+  COLORS.forEach(c => {
+    const b = el(`<button class="swatch" style="background:${c}" aria-label="${c}"></button>`);
+    if (c.toLowerCase() === state.bg.toLowerCase()) b.classList.add("on");
+    b.addEventListener("click", () => { state.bg = c; persist(); redraw(); renderTab(); });
+    cs.append(b);
+  });
+  const picker = el(`<input type="color" aria-label="Eigene Farbe">`);
+  picker.value = /^#[0-9a-f]{6}$/i.test(state.bg) ? state.bg : "#ffffff";
+  picker.addEventListener("input", () => { state.bg = picker.value; persist(); redraw(); });
+  picker.addEventListener("change", renderTab);
+  cs.append(picker);
+  tabBody.append(colorRow);
+}
+
+function renderPhotoTab() {
+  const i = state.selected;
+  if (i < 0 || !state.photos[i]) {
+    tabBody.append(el(`<p class="hint">Tippe in der Vorschau auf ein Foto, um es auszuwählen. Dann kannst du es mit einem Finger verschieben und mit zwei Fingern zoomen.</p>`));
+    return;
+  }
+  const p = state.photos[i];
+  tabBody.append(el(`<p class="hint">Foto ${i + 1} ausgewählt – ziehen zum Verschieben, Zwei-Finger-Geste zum Zoomen.</p>`));
+  const row = el(`<div class="row"><label>Zoom</label><input type="range" min="1" max="4" step="0.01"><output></output></div>`);
+  const input = row.querySelector("input"), out = row.querySelector("output");
+  input.value = p.zoom;
+  out.textContent = p.zoom.toFixed(1) + "×";
+  input.addEventListener("input", () => { p.zoom = +input.value; out.textContent = p.zoom.toFixed(1) + "×"; redraw(); });
+  tabBody.append(row);
+  const acts = el(`<div class="sel-actions"></div>`);
+  const swap = el(`<button>${state.swapMode ? "Zielfeld antippen …" : "Tauschen"}</button>`);
+  if (state.swapMode) swap.classList.add("active");
+  swap.disabled = state.photos.length < 2;
+  swap.addEventListener("click", () => { state.swapMode = !state.swapMode; renderTab(); redraw(); });
+  const reset = el(`<button>Zurücksetzen</button>`);
+  reset.addEventListener("click", () => { p.zoom = 1; p.ox = 0; p.oy = 0; renderTab(); redraw(); });
+  const del = el(`<button class="danger">Entfernen</button>`);
+  del.addEventListener("click", () => {
+    state.photos.splice(i, 1);
+    state.selected = -1;
+    afterPhotosChanged();
+  });
+  acts.append(swap, reset, del);
+  tabBody.append(acts);
+}
+
+function renderExportTab() {
+  const fmtRow = el(`<div class="row"><label>Dateityp</label><select><option value="jpeg">JPG (kleiner)</option><option value="png">PNG (verlustfrei)</option></select></div>`);
+  const fsel = fmtRow.querySelector("select");
+  fsel.value = state.format;
+  fsel.addEventListener("change", () => { state.format = fsel.value; persist(); });
+  const sizeRow = el(`<div class="row"><label>Auflösung</label><select><option value="1080">1080 px</option><option value="2160">2160 px</option><option value="3000">3000 px</option></select></div>`);
+  const ssel = sizeRow.querySelector("select");
+  ssel.value = String(state.size);
+  ssel.addEventListener("change", () => { state.size = +ssel.value; persist(); });
+  tabBody.append(fmtRow, sizeRow);
+  tabBody.append(el(`<p class="hint">Die Auflösung gilt für die längere Seite. „Speichern" öffnet das iOS-Menü – dort „Bild sichern" wählen.</p>`));
+}
+
+/* ---------- Export ---------- */
+async function exportBlob() {
+  const [, aw, ah] = ASPECTS[state.aspect];
+  const long = state.size;
+  const W = aw >= ah ? long : Math.round(long * aw / ah);
+  const H = aw >= ah ? Math.round(long * ah / aw) : long;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  render(c.getContext("2d"), W, H, false);
+  const type = state.format === "png" ? "image/png" : "image/jpeg";
+  return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("toBlob")), type, 0.93));
+}
+
+document.getElementById("btnSave").addEventListener("click", async () => {
+  const btn = document.getElementById("btnSave");
+  btn.disabled = true;
+  try {
+    const blob = await exportBlob();
+    const ext = state.format === "png" ? "png" : "jpg";
+    const name = `collage-${new Date().toISOString().slice(0, 10)}.${ext}`;
+    const file = new File([blob], name, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: "Collage" }); }
+      catch (e) { if (e.name !== "AbortError") throw e; }
+    } else {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    }
+  } catch (e) {
+    toast("Export fehlgeschlagen. Versuche eine kleinere Auflösung.");
+  } finally {
+    btn.disabled = state.photos.length === 0;
+  }
+});
+
+/* ---------- Sonstiges ---------- */
+const fileInput = document.getElementById("file");
+function pickFiles() { fileInput.click(); }
+document.getElementById("btnAdd").addEventListener("click", pickFiles);
+document.getElementById("btnAdd2").addEventListener("click", pickFiles);
+fileInput.addEventListener("change", async () => {
+  await addFiles(fileInput.files);
+  fileInput.value = "";
+});
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+}
+
+window.addEventListener("resize", fitPreview);
+window.addEventListener("orientationchange", () => setTimeout(fitPreview, 200));
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderTab);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+
+afterPhotosChanged();
+fitPreview();
+</script>
+</body>
+</html>

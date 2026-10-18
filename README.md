@@ -1,0 +1,29 @@
+# Collage
+
+Einfache Collage-App als Web-App (PWA). Läuft komplett im Browser, die Fotos verlassen das Gerät nicht.
+
+## Funktionen
+
+- Bis zu 12 Fotos aus der Mediathek wählen
+- Automatisch passende Layouts (Zeilen, Spalten, ein großes Foto plus kleine)
+- Format: 1:1, 4:5, 3:4, 9:16, 16:9, 3:2, 2:3
+- Abstand, Rand, runde Ecken, Hintergrundfarbe
+- Pro Foto: verschieben, zoomen (Zwei-Finger-Geste oder Regler), tauschen, entfernen
+- Export als JPG oder PNG (1080 / 2160 / 3000 px) über das iOS-Teilen-Menü
+- Funktioniert offline, sobald sie einmal geladen wurde
+
+## Auf dem iPhone installieren
+
+1. Link in **Safari** öffnen
+2. Teilen-Symbol → **Zum Home-Bildschirm**
+
+## Veröffentlichen mit GitHub Pages
+
+Repo → Settings → Pages → Source: *Deploy from a branch* → Branch `main`, Ordner `/ (root)`.
+Die App ist dann unter `https://<benutzername>.github.io/<repo-name>/` erreichbar.
+
+## Lokal testen
+
+```
+npx serve .
+```
