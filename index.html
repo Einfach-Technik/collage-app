@@ -114,7 +114,7 @@ canvas#preview {
 #tabs button.on { color: var(--accent); background: var(--chip); font-weight: 600; }
 #tabBody {
   padding: 12px 16px;
-  height: 168px;
+  height: 200px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -248,10 +248,13 @@ const state = {
   textColor: "#ffffff",
   textBg: "outline",       // outline | bar | none
   dateFmt: "num",          // num | long | month
+  textMode: "photos",      // photos | strip | both
+  stripText: "",           // eigener Text für den Bereich (leer = automatisch)
   tab: "layout"
 };
 const PERSIST = ["aspect", "gap", "pad", "radius", "bg", "format", "size",
-  "textOn", "showDate", "showPlace", "textPos", "textSize", "textColor", "textBg", "dateFmt"];
+  "textOn", "showDate", "showPlace", "textPos", "textSize", "textColor", "textBg", "dateFmt", "textMode"];
+const FONT = '-apple-system, "Segoe UI", Roboto, sans-serif';
 const TEXT_COLORS = ["#ffffff", "#000000", "#ffd166", "#ff6b6b"];
 
 try {
@@ -316,8 +319,11 @@ function cellRects(W, H) {
   const lay = currentLayout();
   if (!lay) return [];
   const pad = unit(W, H, state.pad), gap = unit(W, H, state.gap);
-  const ax = pad - gap / 2, ay = pad - gap / 2;
-  const aw = W - 2 * pad + gap, ah = H - 2 * pad + gap;
+  const strip = stripInfo(W, H);     // eigener Textbereich oben/unten verkleinert die Fotofläche
+  const y0 = strip && state.textPos[0] === "t" ? strip.h : 0;
+  const hh = strip ? H - strip.h : H;
+  const ax = pad - gap / 2, ay = y0 + pad - gap / 2;
+  const aw = W - 2 * pad + gap, ah = hh - 2 * pad + gap;
   return lay.rects.map(([x, y, w, h]) => ({
     x: ax + x * aw + gap / 2,
     y: ay + y * ah + gap / 2,
@@ -362,6 +368,8 @@ function render(ctx, W, H, ui) {
     drawCaption(ctx, p, r, W, H);
     ctx.restore();
   });
+  const strip = stripInfo(W, H);
+  if (strip) drawStrip(ctx, strip, W, H);
   if (ui && state.selected >= 0 && rects[state.selected]) {
     const r = rects[state.selected];
     ctx.save();
@@ -449,20 +457,67 @@ function isLight(hex) {
   const n = parseInt(hex.slice(1), 16);
   return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) > 150;
 }
+function placeText(p) { return p.showPlace && p.place ? p.place : ""; }
+function dateTextOf(p) {
+  if (!p.showDate) return "";
+  return p.dateText !== null ? p.dateText : fmtDate(p.date);
+}
 function captionLines(p) {
-  if (!state.textOn) return [];
+  if (!state.textOn || state.textMode === "strip") return [];
+  return [placeText(p), dateTextOf(p)].filter(Boolean);
+}
+
+// Gemeinsamer Textbereich: alle Orte einmal, Datum oder Zeitraum.
+function stripLines() {
+  if (!state.textOn || state.textMode === "photos") return [];
+  const custom = state.stripText.trim();
+  if (custom) return [custom];
   const lines = [];
-  if (state.showPlace && p.place) lines.push(p.place);
-  if (state.showDate) {
-    const t = p.dateText !== null ? p.dateText : fmtDate(p.date);
-    if (t) lines.push(t);
+  const places = [...new Set(state.photos.map(placeText).filter(Boolean))];
+  if (places.length) lines.push(places.join(" · "));
+  const shown = state.photos.filter(p => p.showDate);
+  let date = "";
+  if (shown.some(p => p.dateText !== null)) {
+    date = [...new Set(shown.map(dateTextOf).filter(Boolean))].join(" · ");
+  } else {
+    const ds = shown.filter(p => p.date).map(p => p.date)
+      .sort((a, b) => (a.y - b.y) || (a.m - b.m) || (a.d - b.d));
+    if (ds.length) {
+      const first = fmtDate(ds[0]), last = fmtDate(ds[ds.length - 1]);
+      date = first === last ? first : `${first} – ${last}`;
+    }
   }
+  if (date) lines.push(date);
   return lines;
+}
+const measureCtx = document.createElement("canvas").getContext("2d");
+function stripInfo(W, H) {
+  const lines = stripLines();
+  if (!lines.length) return null;
+  let size = unit(W, H, state.textSize);
+  measureCtx.font = `600 ${size}px ${FONT}`;
+  const widest = Math.max(...lines.map(l => measureCtx.measureText(l).width));
+  if (widest > W * 0.92) size *= W * 0.92 / widest;
+  const lh = size * 1.25;
+  return { lines, size, lh, h: lines.length * lh + size * 1.6 };
+}
+function drawStrip(ctx, s, W, H) {
+  const top = state.textPos[0] === "t", al = state.textPos[1];
+  const m = Math.max(unit(W, H, state.pad), s.size * 0.8);
+  const x = al === "l" ? m : al === "r" ? W - m : W / 2;
+  const y0 = top ? 0 : H - s.h;
+  ctx.save();
+  ctx.font = `600 ${s.size}px ${FONT}`;
+  ctx.fillStyle = isLight(state.bg) ? "#111114" : "#ffffff";   // passt sich dem Hintergrund an
+  ctx.textAlign = al === "l" ? "left" : al === "r" ? "right" : "center";
+  ctx.textBaseline = "top";
+  s.lines.forEach((l, i) => ctx.fillText(l, x, y0 + s.size * 0.8 + i * s.lh));
+  ctx.restore();
 }
 function drawCaption(ctx, p, r, W, H) {
   const lines = captionLines(p);
   if (!lines.length) return;
-  const family = '-apple-system, "Segoe UI", Roboto, sans-serif';
+  const family = FONT;
   let size = unit(W, H, state.textSize);
   ctx.font = `600 ${size}px ${family}`;
   const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
@@ -550,7 +605,7 @@ async function addFiles(files) {
   for (const f of list.slice(0, Math.max(0, room))) {
     try {
       const meta = await readMeta(f);
-      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0, ...meta });
+      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0, showPlace: state.showPlace, showDate: state.showDate, ...meta });
     } catch (e) { failed++; }
   }
   if (failed) toast(`${failed} Foto(s) konnten nicht geladen werden.`);
@@ -744,12 +799,12 @@ function renderStyleTab() {
   tabBody.append(colorRow);
 }
 
-function selectRow(label, key, opts) {
+function selectRow(label, key, opts, onChange) {
   const row = el(`<div class="row"><label>${label}</label><select style="flex:1"></select></div>`);
   const s = row.querySelector("select");
   opts.forEach(([v, t]) => s.append(new Option(t, v)));
   s.value = state[key];
-  s.addEventListener("change", () => { state[key] = s.value; persist(); redraw(); });
+  s.addEventListener("change", () => { state[key] = s.value; persist(); redraw(); if (onChange) onChange(); });
   return row;
 }
 
@@ -759,10 +814,17 @@ function renderTextTab() {
   [["textOn", "Text an"], ["showPlace", "Ort"], ["showDate", "Datum"]].forEach(([k, label]) => {
     const b = el(`<button>${label}</button>`);
     if (state[k]) b.classList.add("active");
-    b.addEventListener("click", () => { state[k] = !state[k]; persist(); renderTab(); redraw(); });
+    b.addEventListener("click", () => {
+      state[k] = !state[k];
+      if (k !== "textOn") state.photos.forEach(p => { p[k] = state[k]; });   // gilt für alle Fotos
+      persist(); renderTab(); redraw();
+    });
     sc.append(b);
   });
   tabBody.append(toggles);
+  tabBody.append(selectRow("Wo", "textMode", [
+    ["photos", "Auf den Fotos"], ["strip", "Eigener Bereich"], ["both", "Beides"]
+  ], () => { enableText(); renderTab(); redraw(); }));
 
   const find = el(`<div class="row"><button id="btnPlaces">Orte aus GPS ermitteln</button></div>`);
   find.querySelector("button").disabled = !state.photos.length;
@@ -793,6 +855,13 @@ function renderTextTab() {
 
   tabBody.append(selectRow("Stil", "textBg", [["outline", "Kontur"], ["bar", "Balken"], ["none", "Ohne"]]));
   tabBody.append(selectRow("Format", "dateFmt", [["num", "18.10.2026"], ["long", "18. Oktober 2026"], ["month", "Oktober 2026"]]));
+  if (state.textMode !== "photos") {
+    const r = el(`<div class="row"><label>Eigener Text</label><input type="text" placeholder="leer = automatisch"></div>`);
+    const inp = r.querySelector("input");
+    inp.value = state.stripText;
+    inp.addEventListener("input", () => { state.stripText = inp.value; redraw(); });
+    tabBody.append(r);
+  }
 }
 
 function enableText() {
@@ -889,6 +958,13 @@ function renderPhotoTab() {
   input.addEventListener("input", () => { p.zoom = +input.value; out.textContent = p.zoom.toFixed(1) + "×"; redraw(); });
   tabBody.append(row);
 
+  const showRow = el(`<div class="row"><label>Anzeigen</label><div class="scroller" style="flex:1"></div></div>`);
+  [["showPlace", "Ort"], ["showDate", "Datum"]].forEach(([k, label]) => {
+    const b = el(`<button>${label}</button>`);
+    if (p[k]) b.classList.add("active");
+    b.addEventListener("click", () => { p[k] = !p[k]; if (p[k]) enableText(); renderTab(); redraw(); });
+    showRow.querySelector(".scroller").append(b);
+  });
   const dateRow = el(`<div class="row"><label>Datum</label><input type="text" placeholder="z. B. 18.10.2026"></div>`);
   const di = dateRow.querySelector("input");
   di.value = p.dateText !== null ? p.dateText : fmtDate(p.date);
@@ -900,7 +976,7 @@ function renderPhotoTab() {
   gpsBtn.disabled = p.lat === null;
   gpsBtn.title = p.lat === null ? "Dieses Foto enthält keinen Standort" : "";
   gpsBtn.addEventListener("click", async () => { await resolvePlaces([i], true); });
-  tabBody.append(dateRow, placeRow);
+  tabBody.append(showRow, dateRow, placeRow);
 
   const acts = el(`<div class="sel-actions"></div>`);
   const swap = el(`<button>${state.swapMode ? "Zielfeld antippen …" : "Tauschen"}</button>`);
