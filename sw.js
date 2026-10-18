@@ -1,4 +1,4 @@
-const CACHE = "collage-v2";
+const CACHE = "collage-v3";
 const ASSETS = [
   "./",
   "index.html",

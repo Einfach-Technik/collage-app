@@ -102,11 +102,16 @@ canvas#preview {
   display: flex;
   gap: 4px;
   padding: 8px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+#tabs::-webkit-scrollbar { display: none; }
 #tabs button {
-  flex: 1;
+  flex: 1 0 auto;
+  white-space: nowrap;
   background: none;
-  padding: 8px 4px;
+  padding: 8px 10px;
   border-radius: 8px;
   color: var(--muted);
   font-size: 14px;
@@ -153,6 +158,12 @@ input[type=text] {
   -webkit-user-select: text; user-select: text;
 }
 .row button.small { flex: 0 0 auto; padding: 8px 10px; font-size: 14px; }
+.shape-btn {
+  flex: 0 0 auto; width: 68px; padding: 6px 4px 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.shape-btn canvas { width: 44px; height: 44px; display: block; }
+.shape-btn span { font-size: 11px; color: var(--muted); }
 .thumb { position: relative; flex: 0 0 auto; width: 56px; height: 56px; }
 .thumb canvas { width: 100%; height: 100%; border-radius: 8px; display: block; }
 .thumb .x {
@@ -198,8 +209,10 @@ input[type=text] {
 <div id="panel">
   <div id="tabs">
     <button data-tab="layout" class="on">Layout</button>
+    <button data-tab="form">Form</button>
     <button data-tab="style">Stil</button>
-    <button data-tab="text">Text</button>
+    <button data-tab="text">Ort/Datum</button>
+    <button data-tab="free">Text</button>
     <button data-tab="photo">Foto</button>
     <button data-tab="export">Export</button>
   </div>
@@ -250,10 +263,16 @@ const state = {
   dateFmt: "num",          // num | long | month
   textMode: "photos",      // photos | strip | both
   stripText: "",           // eigener Text für den Bereich (leer = automatisch)
+  shape: "rect",           // Form der einzelnen Fotos
+  frame: "rect",           // Form der ganzen Collage (rect = keine)
+  shapeFit: "square",      // square | fill
+  texts: [],               // freie Texte, siehe newText()
+  selText: -1,
   tab: "layout"
 };
 const PERSIST = ["aspect", "gap", "pad", "radius", "bg", "format", "size",
-  "textOn", "showDate", "showPlace", "textPos", "textSize", "textColor", "textBg", "dateFmt", "textMode"];
+  "textOn", "showDate", "showPlace", "textPos", "textSize", "textColor", "textBg", "dateFmt", "textMode",
+  "shape", "frame", "shapeFit"];
 const FONT = '-apple-system, "Segoe UI", Roboto, sans-serif';
 const TEXT_COLORS = ["#ffffff", "#000000", "#ffd166", "#ff6b6b"];
 
@@ -315,15 +334,26 @@ function currentLayout() {
 // Abstände sind relativ zur kürzeren Seite, damit Vorschau und Export gleich aussehen.
 function unit(W, H, v) { return Math.min(W, H) * v / 400; }
 
-function cellRects(W, H) {
-  const lay = currentLayout();
-  if (!lay) return [];
-  const pad = unit(W, H, state.pad), gap = unit(W, H, state.gap);
+// Fläche, auf der die Fotos liegen (ohne Rand und ohne eigenen Textbereich).
+function contentArea(W, H) {
+  const pad = unit(W, H, state.pad);
   const strip = stripInfo(W, H);     // eigener Textbereich oben/unten verkleinert die Fotofläche
   const y0 = strip && state.textPos[0] === "t" ? strip.h : 0;
   const hh = strip ? H - strip.h : H;
-  const ax = pad - gap / 2, ay = y0 + pad - gap / 2;
-  const aw = W - 2 * pad + gap, ah = hh - 2 * pad + gap;
+  let a = { x: pad, y: y0 + pad, w: W - 2 * pad, h: hh - 2 * pad };
+  if (state.frame !== "rect" && state.shapeFit === "square") {   // Gesamtform: quadratische Fläche
+    const s = Math.min(a.w, a.h);
+    a = { x: a.x + (a.w - s) / 2, y: a.y + (a.h - s) / 2, w: s, h: s };
+  }
+  return a;
+}
+
+function cellRects(W, H) {
+  const lay = currentLayout();
+  if (!lay) return [];
+  const gap = unit(W, H, state.gap), a = contentArea(W, H);
+  const ax = a.x - gap / 2, ay = a.y - gap / 2;
+  const aw = a.w + gap, ah = a.h + gap;
   return lay.rects.map(([x, y, w, h]) => ({
     x: ax + x * aw + gap / 2,
     y: ay + y * ah + gap / 2,
@@ -344,6 +374,118 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/* ---------- Formen ---------- */
+const SHAPES = [
+  ["rect", "Eckig"], ["circle", "Rund"], ["heart", "Herz"], ["star", "Stern"],
+  ["diamond", "Raute"], ["hexagon", "Sechseck"], ["triangle", "Dreieck"], ["flower", "Blüte"]
+];
+const shapeCache = {};
+// Umriss als Punkte im Einheitsquadrat (Seitenverhältnis bleibt, zentriert).
+function shapePoints(shape) {
+  if (shapeCache[shape]) return shapeCache[shape];
+  const raw = [];
+  const poly = (n, f) => { for (let i = 0; i < n; i++) raw.push(f(i / n * Math.PI * 2)); };
+  if (shape === "circle") poly(120, t => [Math.cos(t), Math.sin(t)]);
+  else if (shape === "heart") poly(160, t => [
+    16 * Math.sin(t) ** 3,
+    -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t))
+  ]);
+  else if (shape === "star") {
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 0.45 : 1, t = -Math.PI / 2 + i * Math.PI / 5;
+      raw.push([r * Math.cos(t), r * Math.sin(t)]);
+    }
+  }
+  else if (shape === "diamond") raw.push([0, -1], [1, 0], [0, 1], [-1, 0]);
+  else if (shape === "hexagon") poly(6, t => [Math.cos(t), Math.sin(t)]);
+  else if (shape === "triangle") raw.push([0, -1], [1, 0.732], [-1, 0.732]);
+  else if (shape === "flower") poly(240, t => {
+    const r = 0.78 + 0.22 * Math.cos(8 * t);
+    return [r * Math.cos(t), r * Math.sin(t)];
+  });
+  const xs = raw.map(p => p[0]), ys = raw.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const k = 1 / Math.max(maxX - minX, maxY - minY);
+  const ox = (1 - (maxX - minX) * k) / 2, oy = (1 - (maxY - minY) * k) / 2;
+  const pts = raw.map(([x, y]) => [(x - minX) * k + ox, (y - minY) * k + oy]);
+  const us = pts.map(p => p[0]), vs = pts.map(p => p[1]);
+  return (shapeCache[shape] = {
+    pts, u0: Math.min(...us), u1: Math.max(...us), v0: Math.min(...vs), v1: Math.max(...vs)
+  });
+}
+// Pfad der Form in der Box b. fill=true dehnt die Form auf die ganze Box.
+function shapePath(ctx, shape, b, rad, fill = state.shapeFit === "fill") {
+  if (shape === "rect") { roundRect(ctx, b.x, b.y, b.w, b.h, rad); return; }
+  const s = shapePoints(shape);
+  ctx.beginPath();
+  s.pts.forEach(([u, v], i) => {
+    const x = fill ? b.x + (u - s.u0) / (s.u1 - s.u0) * b.w : b.x + u * b.w;
+    const y = fill ? b.y + (v - s.v0) / (s.v1 - s.v0) * b.h : b.y + v * b.h;
+    if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  });
+  ctx.closePath();
+}
+// Box, in die die Form eines Fotos passt: Quadrat in der Zellenmitte oder die ganze Zelle.
+function shapeBox(r) {
+  if (state.shapeFit === "fill") return r;
+  const s = Math.min(r.w, r.h);
+  return { x: r.x + (r.w - s) / 2, y: r.y + (r.h - s) / 2, w: s, h: s };
+}
+
+/* ---------- Freie Texte ---------- */
+const TEXT_FONTS = [["sans", "Standard"], ["serif", "Serif"], ["script", "Handschrift"]];
+function newText() {
+  return { text: "Dein Text", x: 0.5, y: 0.5, size: 28, color: "#ffffff", font: "sans", bold: true, outline: true, rot: 0 };
+}
+function fontFor(t, size) {
+  const fam = t.font === "serif" ? 'Georgia, "Times New Roman", serif'
+    : t.font === "script" ? '"Snell Roundhand", "Brush Script MT", "Segoe Script", cursive' : FONT;
+  return `${t.bold ? 700 : 400} ${size}px ${fam}`;
+}
+function textBox(t, W, H, c = measureCtx) {
+  const size = unit(W, H, t.size);
+  c.font = fontFor(t, size);
+  return { size, w: c.measureText(t.text).width, h: size * 1.2, cx: t.x * W, cy: t.y * H };
+}
+function drawTexts(ctx, W, H, ui) {
+  state.texts.forEach((t, i) => {
+    if (!t.text) return;
+    const b = textBox(t, W, H, ctx);
+    ctx.save();
+    ctx.translate(b.cx, b.cy);
+    ctx.rotate(t.rot * Math.PI / 180);
+    ctx.font = fontFor(t, b.size);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    if (t.outline) {
+      ctx.lineWidth = b.size * 0.18;
+      ctx.strokeStyle = isLight(t.color) ? "rgba(0,0,0,.7)" : "rgba(255,255,255,.8)";
+      ctx.strokeText(t.text, 0, 0);
+    }
+    ctx.fillStyle = t.color;
+    ctx.fillText(t.text, 0, 0);
+    if (ui && i === state.selText) {
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#0a84ff";
+      ctx.strokeRect(-b.w / 2 - 6, -b.h / 2 - 2, b.w + 12, b.h + 4);
+    }
+    ctx.restore();
+  });
+}
+function textAt(px, py) {
+  for (let i = state.texts.length - 1; i >= 0; i--) {
+    const t = state.texts[i];
+    if (!t.text) continue;
+    const b = textBox(t, view.w, view.h), a = t.rot * Math.PI / 180;
+    const dx = px - b.cx, dy = py - b.cy;
+    const lx = dx * Math.cos(a) + dy * Math.sin(a), ly = -dx * Math.sin(a) + dy * Math.cos(a);
+    if (Math.abs(lx) <= b.w / 2 + 10 && Math.abs(ly) <= b.h / 2 + 8) return i;
+  }
+  return -1;
+}
+
 function drawPhoto(ctx, p, r) {
   const iw = p.src.width, ih = p.src.height;
   const s = Math.max(r.w / iw, r.h / ih) * p.zoom;
@@ -358,24 +500,38 @@ function render(ctx, W, H, ui) {
   ctx.fillRect(0, 0, W, H);
   const rects = cellRects(W, H);
   const rad = unit(W, H, state.radius);
+  const plain = state.shape === "rect";
+  ctx.save();
+  if (state.frame !== "rect") {                       // Gesamtform der Collage
+    shapePath(ctx, state.frame, contentArea(W, H), 0);
+    ctx.clip();
+  }
   rects.forEach((r, i) => {
     const p = state.photos[i];
     if (!p) return;
+    const box = plain ? r : shapeBox(r);
     ctx.save();
-    roundRect(ctx, r.x, r.y, r.w, r.h, rad);
+    shapePath(ctx, state.shape, box, rad);
     ctx.clip();
-    drawPhoto(ctx, p, r);
+    drawPhoto(ctx, p, box);
+    ctx.restore();
+    ctx.save();                                        // Beschriftung innerhalb der Zelle
+    roundRect(ctx, r.x, r.y, r.w, r.h, plain ? rad : 0);
+    ctx.clip();
     drawCaption(ctx, p, r, W, H);
     ctx.restore();
   });
+  ctx.restore();
   const strip = stripInfo(W, H);
   if (strip) drawStrip(ctx, strip, W, H);
+  drawTexts(ctx, W, H, ui);
   if (ui && state.selected >= 0 && rects[state.selected]) {
     const r = rects[state.selected];
     ctx.save();
     ctx.lineWidth = 3;
     ctx.strokeStyle = state.swapMode ? "#ff9f0a" : "#0a84ff";
-    roundRect(ctx, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad);
+    if (plain) roundRect(ctx, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad);
+    else shapePath(ctx, state.shape, shapeBox(r), rad);
     ctx.stroke();
     ctx.restore();
   }
@@ -652,8 +808,9 @@ preview.addEventListener("pointerdown", e => {
   const pos = localPos(e);
   pointers.set(e.pointerId, pos);
   if (pointers.size === 1) {
-    const hit = cellAt(pos.x, pos.y);
-    drag = { cell: hit, startX: pos.x, startY: pos.y, moved: false, pinch: null };
+    const ti = textAt(pos.x, pos.y);                  // freie Texte liegen über den Fotos
+    drag = { cell: ti >= 0 ? -1 : cellAt(pos.x, pos.y), text: ti, startX: pos.x, startY: pos.y, moved: false, pinch: null };
+    if (ti >= 0) { state.selText = ti; state.selected = -1; state.swapMode = false; redraw(); }
   } else if (pointers.size === 2 && drag && drag.cell >= 0) {
     const [a, b] = [...pointers.values()];
     drag.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: state.photos[drag.cell].zoom };
@@ -665,6 +822,15 @@ preview.addEventListener("pointermove", e => {
   if (!pointers.has(e.pointerId) || !drag) return;
   const pos = localPos(e), prev = pointers.get(e.pointerId);
   pointers.set(e.pointerId, pos);
+  if (drag.text >= 0) {
+    if (!drag.moved && Math.hypot(pos.x - drag.startX, pos.y - drag.startY) < 6) return;
+    drag.moved = true;
+    const t = state.texts[drag.text];
+    t.x = clamp(t.x + (pos.x - prev.x) / view.w, 0, 1);
+    t.y = clamp(t.y + (pos.y - prev.y) / view.h, 0, 1);
+    redraw();
+    return;
+  }
   if (drag.cell < 0) return;
   const p = state.photos[drag.cell];
   if (pointers.size >= 2 && drag.pinch) {
@@ -688,7 +854,8 @@ function endPointer(e) {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
   if (pointers.size === 0 && drag) {
-    if (!drag.moved) onTapCell(drag.cell);
+    if (drag.text >= 0) setTab("free");
+    else if (!drag.moved) onTapCell(drag.cell);
     drag = null;
     if (state.tab === "photo") renderTab();
   } else if (pointers.size < 2 && drag) {
@@ -699,6 +866,7 @@ preview.addEventListener("pointerup", endPointer);
 preview.addEventListener("pointercancel", endPointer);
 
 function onTapCell(i) {
+  state.selText = -1;
   if (state.swapMode && state.selected >= 0 && i >= 0 && i !== state.selected) {
     const a = state.selected;
     [state.photos[a], state.photos[i]] = [state.photos[i], state.photos[a]];
@@ -718,7 +886,11 @@ function onTapCell(i) {
 const tabBody = document.getElementById("tabBody");
 function setTab(t) {
   state.tab = t;
-  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  document.querySelectorAll("#tabs button").forEach(b => {
+    const on = b.dataset.tab === t;
+    b.classList.toggle("on", on);
+    if (on) { try { b.scrollIntoView({ inline: "nearest", block: "nearest" }); } catch (e) {} }
+  });
   renderTab();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
@@ -747,6 +919,8 @@ function renderTab() {
   if (state.tab === "layout") renderLayoutTab();
   else if (state.tab === "style") renderStyleTab();
   else if (state.tab === "text") renderTextTab();
+  else if (state.tab === "form") renderFormTab();
+  else if (state.tab === "free") renderFreeTab();
   else if (state.tab === "photo") renderPhotoTab();
   else renderExportTab();
 }
@@ -922,11 +1096,127 @@ function newCollage(ask) {
   if (ask && state.photos.length && !confirm("Alle Fotos entfernen und eine neue Collage beginnen?")) return;
   state.photos = [];
   state.selected = -1;
+  state.texts = [];
+  state.selText = -1;
+  state.stripText = "";
   setTab("layout");
   afterPhotosChanged();
 }
 
 function showDone(show = true) { document.getElementById("done").hidden = !show; }
+
+function shapeButton(shape, label, active, onClick) {
+  const b = el(`<button class="shape-btn"><canvas width="96" height="96"></canvas><span></span></button>`);
+  b.querySelector("span").textContent = label;
+  if (active) b.classList.add("active");
+  const c = b.querySelector("canvas").getContext("2d");
+  c.fillStyle = getComputedStyle(document.body).color;
+  shapePath(c, shape, { x: 6, y: 6, w: 84, h: 84 }, 14, false);
+  c.fill();
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function renderFormTab() {
+  tabBody.append(el(`<p class="hint">Form der einzelnen Fotos</p>`));
+  const s1 = el(`<div class="scroller"></div>`);
+  SHAPES.forEach(([key, label]) => s1.append(shapeButton(key, label, state.shape === key,
+    () => { state.shape = key; persist(); renderTab(); redraw(); })));
+  tabBody.append(s1);
+  tabBody.append(el(`<p class="hint" style="margin-top:8px">Form der ganzen Collage</p>`));
+  const s2 = el(`<div class="scroller"></div>`);
+  SHAPES.forEach(([key, label]) => s2.append(shapeButton(key, key === "rect" ? "Keine" : label, state.frame === key,
+    () => { state.frame = key; persist(); renderTab(); redraw(); })));
+  tabBody.append(s2);
+  tabBody.append(selectRow("Proportion", "shapeFit", [["square", "Quadratisch"], ["fill", "Zelle ausfüllen"]], renderTab));
+}
+
+function renderFreeTab() {
+  const top = el(`<div class="row"><button class="primary">+ Text</button><div class="scroller" style="flex:1"></div></div>`);
+  const addBtn = top.querySelector("button"), chips = top.querySelector(".scroller");
+  addBtn.disabled = !state.photos.length;
+  addBtn.addEventListener("click", () => {
+    const t = newText();
+    t.y = 0.5 + (state.texts.length % 5) * 0.06;      // neue Texte leicht versetzt
+    state.texts.push(t);
+    state.selText = state.texts.length - 1;
+    state.selected = -1;
+    renderTab();
+    redraw();
+    const inp = tabBody.querySelector("input[type=text]");
+    if (inp) { inp.focus(); inp.select(); }
+  });
+  const chipEls = [];
+  state.texts.forEach((t, i) => {
+    const b = el(`<button></button>`);
+    b.textContent = (t.text || "…").slice(0, 12);
+    if (i === state.selText) b.classList.add("active");
+    b.addEventListener("click", () => { state.selText = i; state.selected = -1; renderTab(); redraw(); });
+    chipEls.push(b);
+    chips.append(b);
+  });
+  tabBody.append(top);
+  const t = state.texts[state.selText];
+  if (!t) {
+    tabBody.append(el(`<p class="hint">Tippe auf „+ Text". Danach kannst du den Text direkt auf der Collage mit dem Finger verschieben.</p>`));
+    return;
+  }
+  const inRow = el(`<div class="row"><label>Text</label><input type="text" placeholder="Dein Text"></div>`);
+  const inp = inRow.querySelector("input");
+  inp.value = t.text;
+  inp.addEventListener("input", () => {
+    t.text = inp.value;
+    chipEls[state.selText].textContent = (t.text || "…").slice(0, 12);
+    redraw();
+  });
+  tabBody.append(inRow);
+  const objSlider = (label, key, min, max, step, fmt) => {
+    const row = el(`<div class="row"><label>${label}</label><input type="range" min="${min}" max="${max}" step="${step}"><output></output></div>`);
+    const input = row.querySelector("input"), out = row.querySelector("output");
+    input.value = t[key];
+    out.textContent = fmt(t[key]);
+    input.addEventListener("input", () => { t[key] = +input.value; out.textContent = fmt(t[key]); redraw(); });
+    return row;
+  };
+  tabBody.append(objSlider("Größe", "size", 8, 90, 1, v => v));
+  tabBody.append(objSlider("Drehung", "rot", -90, 90, 1, v => v + "°"));
+  const fontRow = el(`<div class="row"><label>Schrift</label><select style="flex:1"></select></div>`);
+  const fs = fontRow.querySelector("select");
+  TEXT_FONTS.forEach(([v, n]) => fs.append(new Option(n, v)));
+  fs.value = t.font;
+  fs.addEventListener("change", () => { t.font = fs.value; redraw(); });
+  tabBody.append(fontRow);
+  const colorRow = el(`<div class="row"><label>Farbe</label><div class="scroller" style="flex:1;align-items:center"></div></div>`);
+  const cs = colorRow.querySelector(".scroller");
+  [...TEXT_COLORS, "#4dabf7", "#06d6a0"].forEach(c => {
+    const b = el(`<button class="swatch" style="background:${c}" aria-label="${c}"></button>`);
+    if (c === t.color.toLowerCase()) b.classList.add("on");
+    b.addEventListener("click", () => { t.color = c; redraw(); renderTab(); });
+    cs.append(b);
+  });
+  const picker = el(`<input type="color" aria-label="Eigene Farbe">`);
+  picker.value = /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : "#ffffff";
+  picker.addEventListener("input", () => { t.color = picker.value; redraw(); });
+  picker.addEventListener("change", renderTab);
+  cs.append(picker);
+  tabBody.append(colorRow);
+  const acts = el(`<div class="sel-actions"></div>`);
+  [["bold", "Fett"], ["outline", "Kontur"]].forEach(([k, label]) => {
+    const b = el(`<button>${label}</button>`);
+    if (t[k]) b.classList.add("active");
+    b.addEventListener("click", () => { t[k] = !t[k]; renderTab(); redraw(); });
+    acts.append(b);
+  });
+  const del = el(`<button class="danger">Löschen</button>`);
+  del.addEventListener("click", () => {
+    state.texts.splice(state.selText, 1);
+    state.selText = state.texts.length - 1;
+    renderTab();
+    redraw();
+  });
+  acts.append(del);
+  tabBody.append(acts);
+}
 
 function renderPhotoTab() {
   const i = state.selected;
