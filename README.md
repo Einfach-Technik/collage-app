@@ -9,6 +9,8 @@ Einfache Collage-App als Web-App (PWA). Läuft komplett im Browser, die Fotos ve
 - Format: 1:1, 4:5, 3:4, 9:16, 16:9, 3:2, 2:3
 - Abstand, Rand, runde Ecken, Hintergrundfarbe
 - Pro Foto: verschieben, zoomen (Zwei-Finger-Geste oder Regler), tauschen, entfernen
+- Beschriftung mit Ort und Datum pro Foto: Aufnahmedatum und GPS-Standort werden aus den Foto-Metadaten gelesen (EXIF), alles lässt sich von Hand ändern. Der Ortsname wird auf Wunsch über OpenStreetMap (Nominatim) aus den Koordinaten ermittelt – dabei werden nur Koordinaten gesendet, nie Fotos.
+- „Neu" entfernt alle Fotos und beginnt eine neue Collage; einzelne Fotos lassen sich im Tab „Foto" entfernen
 - Export als JPG oder PNG (1080 / 2160 / 3000 px) über das iOS-Teilen-Menü
 - Funktioniert offline, sobald sie einmal geladen wurde
 

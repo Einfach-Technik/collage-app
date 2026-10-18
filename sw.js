@@ -1,4 +1,4 @@
-const CACHE = "collage-v1";
+const CACHE = "collage-v2";
 const ASSETS = [
   "./",
   "index.html",
@@ -23,6 +23,7 @@ self.addEventListener("activate", e => {
 // Netzwerk zuerst, damit Updates ankommen; offline kommt die Cache-Version.
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).origin !== location.origin) return;   // z. B. Ortssuche nie cachen
   e.respondWith(
     fetch(e.request)
       .then(res => {

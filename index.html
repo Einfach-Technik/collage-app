@@ -147,6 +147,30 @@ select {
 }
 #toast.show { opacity: 1; }
 input[type=file] { display: none; }
+input[type=text] {
+  flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--chip);
+  border: 0; border-radius: 10px; padding: 8px 10px;
+  -webkit-user-select: text; user-select: text;
+}
+.row button.small { flex: 0 0 auto; padding: 8px 10px; font-size: 14px; }
+.thumb { position: relative; flex: 0 0 auto; width: 56px; height: 56px; }
+.thumb canvas { width: 100%; height: 100%; border-radius: 8px; display: block; }
+.thumb .x {
+  position: absolute; top: -6px; right: -6px; width: 22px; height: 22px;
+  border-radius: 50%; padding: 0; background: var(--danger); color: #fff;
+  font-size: 14px; line-height: 22px;
+}
+#done {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 10;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px);
+}
+#done[hidden] { display: none; }
+#done .card {
+  background: var(--panel); border-radius: 16px; padding: 20px;
+  width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 10px;
+}
+#done h2 { margin: 0 0 4px; font-size: 18px; }
 </style>
 </head>
 <body>
@@ -154,6 +178,7 @@ input[type=file] { display: none; }
 <header>
   <h1>Collage</h1>
   <div class="actions">
+    <button id="btnNew" disabled>Neu</button>
     <button id="btnAdd">+ Fotos</button>
     <button id="btnSave" class="primary" disabled>Speichern</button>
   </div>
@@ -174,6 +199,7 @@ input[type=file] { display: none; }
   <div id="tabs">
     <button data-tab="layout" class="on">Layout</button>
     <button data-tab="style">Stil</button>
+    <button data-tab="text">Text</button>
     <button data-tab="photo">Foto</button>
     <button data-tab="export">Export</button>
   </div>
@@ -182,6 +208,14 @@ input[type=file] { display: none; }
 
 <input type="file" id="file" accept="image/*" multiple>
 <div id="toast"></div>
+
+<div id="done" hidden>
+  <div class="card">
+    <h2>Collage gespeichert</h2>
+    <button class="primary" id="doneNew">Neue Collage beginnen</button>
+    <button id="doneKeep">Weiter bearbeiten</button>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -206,19 +240,31 @@ const state = {
   swapMode: false,
   format: "jpeg",
   size: 2160,
+  textOn: false,
+  showDate: true,
+  showPlace: true,
+  textPos: "bl",           // t/b = oben/unten, l/c/r = links/Mitte/rechts
+  textSize: 14,
+  textColor: "#ffffff",
+  textBg: "outline",       // outline | bar | none
+  dateFmt: "num",          // num | long | month
   tab: "layout"
 };
+const PERSIST = ["aspect", "gap", "pad", "radius", "bg", "format", "size",
+  "textOn", "showDate", "showPlace", "textPos", "textSize", "textColor", "textBg", "dateFmt"];
+const TEXT_COLORS = ["#ffffff", "#000000", "#ffd166", "#ff6b6b"];
 
 try {
   const saved = JSON.parse(localStorage.getItem("collage-settings") || "{}");
-  for (const k of ["aspect", "gap", "pad", "radius", "bg", "format", "size"]) {
+  for (const k of PERSIST) {
     if (saved[k] !== undefined) state[k] = saved[k];
   }
 } catch (e) {}
 function persist() {
   try {
-    const { aspect, gap, pad, radius, bg, format, size } = state;
-    localStorage.setItem("collage-settings", JSON.stringify({ aspect, gap, pad, radius, bg, format, size }));
+    const out = {};
+    for (const k of PERSIST) out[k] = state[k];
+    localStorage.setItem("collage-settings", JSON.stringify(out));
   } catch (e) {}
 }
 
@@ -313,6 +359,7 @@ function render(ctx, W, H, ui) {
     roundRect(ctx, r.x, r.y, r.w, r.h, rad);
     ctx.clip();
     drawPhoto(ctx, p, r);
+    drawCaption(ctx, p, r, W, H);
     ctx.restore();
   });
   if (ui && state.selected >= 0 && rects[state.selected]) {
@@ -324,6 +371,129 @@ function render(ctx, W, H, ui) {
     ctx.stroke();
     ctx.restore();
   }
+}
+
+/* ---------- EXIF (Aufnahmedatum, GPS) ---------- */
+function readExif(buf) {
+  const out = {};
+  try {
+    const v = new DataView(buf);
+    if (v.getUint16(0) !== 0xFFD8) return out;
+    let off = 2;
+    while (off + 4 < v.byteLength) {
+      const marker = v.getUint16(off);
+      if ((marker & 0xFF00) !== 0xFF00 || marker === 0xFFDA) break;
+      if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) { parseTiff(v, off + 10, out); break; }
+      off += 2 + v.getUint16(off + 2);
+    }
+  } catch (e) {}
+  return out;
+}
+function parseTiff(v, base, out) {
+  const le = v.getUint16(base) === 0x4949;
+  const u16 = o => v.getUint16(o, le), u32 = o => v.getUint32(o, le);
+  const readIfd = off => {
+    const map = {}, n = u16(base + off);
+    for (let i = 0; i < n; i++) {
+      const e = base + off + 2 + i * 12;
+      map[u16(e)] = { count: u32(e + 4), at: e + 8 };
+    }
+    return map;
+  };
+  const str = t => {
+    const pos = t.count > 4 ? base + u32(t.at) : t.at;
+    let s = "";
+    for (let i = 0; i < t.count - 1; i++) s += String.fromCharCode(v.getUint8(pos + i));
+    return s;
+  };
+  const rats = t => {
+    const pos = base + u32(t.at);
+    return [0, 1, 2].map(i => u32(pos + i * 8) / (u32(pos + i * 8 + 4) || 1));
+  };
+  const ifd0 = readIfd(u32(base + 4));
+  let dt = null;
+  if (ifd0[0x8769]) {
+    const exif = readIfd(u32(ifd0[0x8769].at));
+    if (exif[0x9003]) dt = str(exif[0x9003]);
+  }
+  if (!dt && ifd0[0x0132]) dt = str(ifd0[0x0132]);
+  const m = dt && /^(\d{4}):(\d{2}):(\d{2})/.exec(dt);
+  if (m && +m[1] > 1900 && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1) out.date = { y: +m[1], m: +m[2], d: +m[3] };
+  if (ifd0[0x8825]) {
+    const gps = readIfd(u32(ifd0[0x8825].at));
+    if (gps[1] && gps[2] && gps[3] && gps[4] && gps[2].count === 3 && gps[4].count === 3) {
+      const dms = a => a[0] + a[1] / 60 + a[2] / 3600;
+      let lat = dms(rats(gps[2])), lon = dms(rats(gps[4]));
+      if (str(gps[1]).startsWith("S")) lat = -lat;
+      if (str(gps[3]).startsWith("W")) lon = -lon;
+      if (isFinite(lat) && isFinite(lon) && (lat !== 0 || lon !== 0)) { out.lat = lat; out.lon = lon; }
+    }
+  }
+}
+async function readMeta(file) {
+  let ex = {};
+  try { ex = readExif(await file.slice(0, 262144).arrayBuffer()); } catch (e) {}
+  return { date: ex.date || null, lat: ex.lat ?? null, lon: ex.lon ?? null, place: "", dateText: null };
+}
+
+/* ---------- Beschriftung (Ort, Datum) ---------- */
+function fmtDate(d) {
+  if (!d) return "";
+  const dt = new Date(d.y, d.m - 1, d.d);
+  const two = n => String(n).padStart(2, "0");
+  if (state.dateFmt === "long") return dt.toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
+  if (state.dateFmt === "month") return dt.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+  return `${two(d.d)}.${two(d.m)}.${d.y}`;
+}
+function isLight(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) > 150;
+}
+function captionLines(p) {
+  if (!state.textOn) return [];
+  const lines = [];
+  if (state.showPlace && p.place) lines.push(p.place);
+  if (state.showDate) {
+    const t = p.dateText !== null ? p.dateText : fmtDate(p.date);
+    if (t) lines.push(t);
+  }
+  return lines;
+}
+function drawCaption(ctx, p, r, W, H) {
+  const lines = captionLines(p);
+  if (!lines.length) return;
+  const family = '-apple-system, "Segoe UI", Roboto, sans-serif';
+  let size = unit(W, H, state.textSize);
+  ctx.font = `600 ${size}px ${family}`;
+  const widest = Math.max(...lines.map(l => ctx.measureText(l).width));
+  if (widest > r.w * 0.9) {
+    size *= r.w * 0.9 / widest;
+    ctx.font = `600 ${size}px ${family}`;
+  }
+  const lh = size * 1.25, pad = size * 0.7, h = lines.length * lh;
+  const top = state.textPos[0] === "t", al = state.textPos[1];
+  const bar = state.textBg === "bar";
+  if (bar) {
+    const bandH = h + pad * 1.4;
+    ctx.fillStyle = isLight(state.textColor) ? "rgba(0,0,0,.5)" : "rgba(255,255,255,.6)";
+    ctx.fillRect(r.x, top ? r.y : r.y + r.h - bandH, r.w, bandH);
+  }
+  const inset = bar ? pad * 0.7 : pad;
+  const yTop = top ? r.y + inset : r.y + r.h - inset - h;
+  const x = al === "l" ? r.x + pad : al === "r" ? r.x + r.w - pad : r.x + r.w / 2;
+  ctx.textAlign = al === "l" ? "left" : al === "r" ? "right" : "center";
+  ctx.textBaseline = "top";
+  ctx.lineJoin = "round";
+  lines.forEach((l, i) => {
+    const y = yTop + i * lh;
+    if (state.textBg === "outline") {
+      ctx.lineWidth = size * 0.2;
+      ctx.strokeStyle = isLight(state.textColor) ? "rgba(0,0,0,.7)" : "rgba(255,255,255,.8)";
+      ctx.strokeText(l, x, y);
+    }
+    ctx.fillStyle = state.textColor;
+    ctx.fillText(l, x, y);
+  });
 }
 
 /* ---------- Vorschau ---------- */
@@ -379,7 +549,8 @@ async function addFiles(files) {
   let failed = 0;
   for (const f of list.slice(0, Math.max(0, room))) {
     try {
-      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0 });
+      const meta = await readMeta(f);
+      state.photos.push({ src: await loadImage(f), zoom: 1, ox: 0, oy: 0, ...meta });
     } catch (e) { failed++; }
   }
   if (failed) toast(`${failed} Foto(s) konnten nicht geladen werden.`);
@@ -397,6 +568,7 @@ function afterPhotosChanged() {
   state.swapMode = false;
   document.getElementById("empty").style.display = n ? "none" : "flex";
   document.getElementById("btnSave").disabled = n === 0;
+  document.getElementById("btnNew").disabled = n === 0;
   renderTab();
   redraw();
 }
@@ -519,6 +691,7 @@ function renderTab() {
   tabBody.replaceChildren();
   if (state.tab === "layout") renderLayoutTab();
   else if (state.tab === "style") renderStyleTab();
+  else if (state.tab === "text") renderTextTab();
   else if (state.tab === "photo") renderPhotoTab();
   else renderExportTab();
 }
@@ -571,20 +744,164 @@ function renderStyleTab() {
   tabBody.append(colorRow);
 }
 
+function selectRow(label, key, opts) {
+  const row = el(`<div class="row"><label>${label}</label><select style="flex:1"></select></div>`);
+  const s = row.querySelector("select");
+  opts.forEach(([v, t]) => s.append(new Option(t, v)));
+  s.value = state[key];
+  s.addEventListener("change", () => { state[key] = s.value; persist(); redraw(); });
+  return row;
+}
+
+function renderTextTab() {
+  const toggles = el(`<div class="row"><label>Anzeigen</label><div class="scroller" style="flex:1"></div></div>`);
+  const sc = toggles.querySelector(".scroller");
+  [["textOn", "Text an"], ["showPlace", "Ort"], ["showDate", "Datum"]].forEach(([k, label]) => {
+    const b = el(`<button>${label}</button>`);
+    if (state[k]) b.classList.add("active");
+    b.addEventListener("click", () => { state[k] = !state[k]; persist(); renderTab(); redraw(); });
+    sc.append(b);
+  });
+  tabBody.append(toggles);
+
+  const find = el(`<div class="row"><button id="btnPlaces">Orte aus GPS ermitteln</button></div>`);
+  find.querySelector("button").disabled = !state.photos.length;
+  find.querySelector("button").addEventListener("click", () => resolvePlaces(state.photos.map((_, i) => i), false));
+  tabBody.append(find);
+  tabBody.append(el(`<p class="hint">Sendet nur die Koordinaten (nicht die Fotos) an OpenStreetMap, um den Ortsnamen zu finden. Datum und Ort kannst du unter „Foto" auch von Hand ändern.</p>`));
+
+  tabBody.append(selectRow("Position", "textPos", [
+    ["bl", "Unten links"], ["bc", "Unten Mitte"], ["br", "Unten rechts"],
+    ["tl", "Oben links"], ["tc", "Oben Mitte"], ["tr", "Oben rechts"]
+  ]));
+  tabBody.append(slider("Größe", "textSize", 6, 40, 1, v => v));
+
+  const colorRow = el(`<div class="row"><label>Farbe</label><div class="scroller" style="flex:1;align-items:center"></div></div>`);
+  const cs = colorRow.querySelector(".scroller");
+  TEXT_COLORS.forEach(c => {
+    const b = el(`<button class="swatch" style="background:${c}" aria-label="${c}"></button>`);
+    if (c === state.textColor.toLowerCase()) b.classList.add("on");
+    b.addEventListener("click", () => { state.textColor = c; persist(); redraw(); renderTab(); });
+    cs.append(b);
+  });
+  const picker = el(`<input type="color" aria-label="Eigene Farbe">`);
+  picker.value = /^#[0-9a-f]{6}$/i.test(state.textColor) ? state.textColor : "#ffffff";
+  picker.addEventListener("input", () => { state.textColor = picker.value; persist(); redraw(); });
+  picker.addEventListener("change", renderTab);
+  cs.append(picker);
+  tabBody.append(colorRow);
+
+  tabBody.append(selectRow("Stil", "textBg", [["outline", "Kontur"], ["bar", "Balken"], ["none", "Ohne"]]));
+  tabBody.append(selectRow("Format", "dateFmt", [["num", "18.10.2026"], ["long", "18. Oktober 2026"], ["month", "Oktober 2026"]]));
+}
+
+function enableText() {
+  if (!state.textOn) { state.textOn = true; persist(); }
+}
+
+const placeCache = new Map();
+let resolving = false;
+async function resolvePlaces(indices, force) {
+  if (resolving) return;
+  const photos = indices.map(i => state.photos[i]).filter(Boolean);
+  const withGps = photos.filter(p => p.lat !== null);
+  if (!withGps.length) {
+    toast("Kein Standort in den Fotos gefunden. Auf dem iPhone beim Auswählen unter „Optionen“ den Standort einschließen, oder den Ort von Hand eintragen.");
+    return;
+  }
+  const todo = withGps.filter(p => force || !p.place);
+  resolving = true;
+  toast("Orte werden gesucht …");
+  let ok = 0;
+  try {
+    for (let k = 0; k < todo.length; k++) {
+      const p = todo[k];
+      const key = p.lat.toFixed(2) + "," + p.lon.toFixed(2);
+      let place = placeCache.get(key);
+      if (place === undefined) {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=12&accept-language=de&lat=${p.lat.toFixed(5)}&lon=${p.lon.toFixed(5)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const a = (await res.json()).address || {};
+        const name = a.city || a.town || a.village || a.municipality || a.hamlet || a.suburb || a.county || "";
+        place = [name, a.country].filter(Boolean).join(", ");
+        placeCache.set(key, place);
+        if (k < todo.length - 1) await new Promise(r => setTimeout(r, 1100));   // Nominatim: max. 1 Anfrage/s
+      }
+      p.place = place;
+      if (place) ok++;
+    }
+    if (ok) enableText();
+    const noGps = photos.length - withGps.length;
+    toast(`${ok} Ort(e) gefunden` + (noGps ? ` · ${noGps} Foto(s) ohne Standort` : ""));
+  } catch (e) {
+    toast("Ortssuche fehlgeschlagen. Bist du online?");
+  } finally {
+    resolving = false;
+    renderTab();
+    redraw();
+  }
+}
+
+function removePhoto(i) {
+  state.photos.splice(i, 1);
+  state.selected = -1;
+  afterPhotosChanged();
+}
+
+function newCollage(ask) {
+  if (ask && state.photos.length && !confirm("Alle Fotos entfernen und eine neue Collage beginnen?")) return;
+  state.photos = [];
+  state.selected = -1;
+  setTab("layout");
+  afterPhotosChanged();
+}
+
+function showDone(show = true) { document.getElementById("done").hidden = !show; }
+
 function renderPhotoTab() {
   const i = state.selected;
   if (i < 0 || !state.photos[i]) {
-    tabBody.append(el(`<p class="hint">Tippe in der Vorschau auf ein Foto, um es auszuwählen. Dann kannst du es mit einem Finger verschieben und mit zwei Fingern zoomen.</p>`));
+    if (!state.photos.length) {
+      tabBody.append(el(`<p class="hint">Noch keine Fotos.</p>`));
+      return;
+    }
+    tabBody.append(el(`<p class="hint">Foto antippen zum Bearbeiten, × zum Entfernen.</p>`));
+    const strip = el(`<div class="scroller" style="padding-top:8px"></div>`);
+    state.photos.forEach((p, k) => {
+      const t = el(`<div class="thumb"><canvas width="112" height="112"></canvas><button class="x" aria-label="Foto entfernen">×</button></div>`);
+      const c = t.querySelector("canvas").getContext("2d");
+      const s = Math.max(112 / p.src.width, 112 / p.src.height);
+      c.drawImage(p.src, (112 - p.src.width * s) / 2, (112 - p.src.height * s) / 2, p.src.width * s, p.src.height * s);
+      t.querySelector("canvas").addEventListener("click", () => { state.selected = k; renderTab(); redraw(); });
+      t.querySelector(".x").addEventListener("click", () => removePhoto(k));
+      strip.append(t);
+    });
+    tabBody.append(strip);
     return;
   }
   const p = state.photos[i];
-  tabBody.append(el(`<p class="hint">Foto ${i + 1} ausgewählt – ziehen zum Verschieben, Zwei-Finger-Geste zum Zoomen.</p>`));
+  tabBody.append(el(`<p class="hint">Foto ${i + 1} · ziehen zum Verschieben, zwei Finger zum Zoomen</p>`));
   const row = el(`<div class="row"><label>Zoom</label><input type="range" min="1" max="4" step="0.01"><output></output></div>`);
   const input = row.querySelector("input"), out = row.querySelector("output");
   input.value = p.zoom;
   out.textContent = p.zoom.toFixed(1) + "×";
   input.addEventListener("input", () => { p.zoom = +input.value; out.textContent = p.zoom.toFixed(1) + "×"; redraw(); });
   tabBody.append(row);
+
+  const dateRow = el(`<div class="row"><label>Datum</label><input type="text" placeholder="z. B. 18.10.2026"></div>`);
+  const di = dateRow.querySelector("input");
+  di.value = p.dateText !== null ? p.dateText : fmtDate(p.date);
+  di.addEventListener("input", () => { p.dateText = di.value; enableText(); redraw(); });
+  const placeRow = el(`<div class="row"><label>Ort</label><input type="text" placeholder="z. B. Hamburg"><button class="small">Aus GPS</button></div>`);
+  const pi = placeRow.querySelector("input"), gpsBtn = placeRow.querySelector("button");
+  pi.value = p.place;
+  pi.addEventListener("input", () => { p.place = pi.value; enableText(); redraw(); });
+  gpsBtn.disabled = p.lat === null;
+  gpsBtn.title = p.lat === null ? "Dieses Foto enthält keinen Standort" : "";
+  gpsBtn.addEventListener("click", async () => { await resolvePlaces([i], true); });
+  tabBody.append(dateRow, placeRow);
+
   const acts = el(`<div class="sel-actions"></div>`);
   const swap = el(`<button>${state.swapMode ? "Zielfeld antippen …" : "Tauschen"}</button>`);
   if (state.swapMode) swap.classList.add("active");
@@ -593,11 +910,7 @@ function renderPhotoTab() {
   const reset = el(`<button>Zurücksetzen</button>`);
   reset.addEventListener("click", () => { p.zoom = 1; p.ox = 0; p.oy = 0; renderTab(); redraw(); });
   const del = el(`<button class="danger">Entfernen</button>`);
-  del.addEventListener("click", () => {
-    state.photos.splice(i, 1);
-    state.selected = -1;
-    afterPhotosChanged();
-  });
+  del.addEventListener("click", () => removePhoto(i));
   acts.append(swap, reset, del);
   tabBody.append(acts);
 }
@@ -637,7 +950,7 @@ document.getElementById("btnSave").addEventListener("click", async () => {
     const name = `collage-${new Date().toISOString().slice(0, 10)}.${ext}`;
     const file = new File([blob], name, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: "Collage" }); }
+      try { await navigator.share({ files: [file], title: "Collage" }); showDone(); }
       catch (e) { if (e.name !== "AbortError") throw e; }
     } else {
       const a = document.createElement("a");
@@ -647,6 +960,7 @@ document.getElementById("btnSave").addEventListener("click", async () => {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      showDone();
     }
   } catch (e) {
     toast("Export fehlgeschlagen. Versuche eine kleinere Auflösung.");
@@ -664,6 +978,10 @@ fileInput.addEventListener("change", async () => {
   await addFiles(fileInput.files);
   fileInput.value = "";
 });
+
+document.getElementById("btnNew").addEventListener("click", () => newCollage(true));
+document.getElementById("doneNew").addEventListener("click", () => { showDone(false); newCollage(false); });
+document.getElementById("doneKeep").addEventListener("click", () => showDone(false));
 
 let toastTimer = 0;
 function toast(msg) {
