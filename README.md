@@ -32,3 +32,14 @@ Die App ist dann unter `https://<benutzername>.github.io/<repo-name>/` erreichba
 ```
 npx serve .
 ```
+
+## iOS-App / App Store
+
+Die Web-App ist mit Capacitor als iOS-App verpackt (Ordner `ios/`).
+Schritt-für-Schritt-Anleitung samt Store-Texten: [docs/APP_STORE.md](docs/APP_STORE.md).
+
+```
+npm install
+npm run sync   # Web-App in die iOS-App kopieren
+npm run open   # Xcode öffnen
+```

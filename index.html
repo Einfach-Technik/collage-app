@@ -1377,6 +1377,7 @@ function renderExportTab() {
   ssel.addEventListener("change", () => { state.size = +ssel.value; persist(); });
   tabBody.append(fmtRow, sizeRow);
   tabBody.append(el(`<p class="hint">Die Auflösung gilt für die längere Seite. „Speichern" öffnet das iOS-Menü – dort „Bild sichern" wählen.</p>`));
+  tabBody.append(el(`<p class="hint"><a href="https://einfach-technik.github.io/collage-app/privacy.html" target="_blank" rel="noopener" style="color:var(--accent)">Datenschutz</a></p>`));
 }
 
 /* ---------- Export ---------- */
@@ -1392,6 +1393,26 @@ async function exportBlob() {
   return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("toBlob")), type, 0.93));
 }
 
+// Gibt true (geteilt), "cancel" (abgebrochen) oder false (kein natives Teilen verfügbar/fehlgeschlagen) zurück.
+async function shareNative(blob, name) {
+  const cap = window.Capacitor;
+  if (!cap || !cap.isNativePlatform || !cap.isNativePlatform()) return false;
+  try {
+    const { Filesystem, Share } = cap.Plugins;
+    const data = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(",")[1]);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+    const { uri } = await Filesystem.writeFile({ path: name, data, directory: "CACHE" });
+    await Share.share({ files: [uri] });
+    return true;
+  } catch (e) {
+    return /cancel/i.test(String((e && e.message) || e)) ? "cancel" : false;
+  }
+}
+
 document.getElementById("btnSave").addEventListener("click", async () => {
   const btn = document.getElementById("btnSave");
   btn.disabled = true;
@@ -1399,6 +1420,8 @@ document.getElementById("btnSave").addEventListener("click", async () => {
     const blob = await exportBlob();
     const ext = state.format === "png" ? "png" : "jpg";
     const name = `collage-${new Date().toISOString().slice(0, 10)}.${ext}`;
+    const native = await shareNative(blob, name);     // iOS-App (Capacitor): natives Teilen-Menü
+    if (native) { if (native === true) showDone(); return; }
     const file = new File([blob], name, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: "Collage" }); showDone(); }
